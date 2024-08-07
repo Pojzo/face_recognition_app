@@ -1,3 +1,6 @@
+import os
+
+import numpy as np
 from camera import Camera
 
 import time
@@ -19,25 +22,33 @@ class App:
 		self.size_configured = False
 		self.detecting_faces = True
 
+		self.create_encodings()
 		self.create_ui()
-		self.show_frame()
+		self.update()
 
 	def create_ui(self):
 		self.button_frame = Frame(self.root)
-		self.button_frame.pack(side=tk.LEFT, padx=10)
+		self.button_frame.pack(side=tk.LEFT, anchor=tk.NW, padx=10)
 
-		self.button1 = tk.Button(self.button_frame, command=self.dummy_action)
+		self.button1 = tk.Button(self.button_frame, command=self.dummy_action, text="Start recording");
 		self.button1.pack(pady=10)
 
 		self.button2 = tk.Button(self.button_frame, command=self.dummy_action)
 		self.button2.pack(pady=10)
+
+		self.identities_listbox = tk.Listbox(self.button_frame)
+		self.identities_listbox.pack(padx=10, pady=10)
+
+		texts = self.identities
+		for text in texts:
+			self.identities_listbox.insert(tk.END, text)
 
 		# Label for video feed
 		self.video_label = Label(self.root)
 		self.video_label.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True)
 
 		self.detect_faces_var = tk.BooleanVar(value=True)
-		self.detect_landmarks_var = tk.BooleanVar(value=True)
+		self.detect_landmarks_var = tk.BooleanVar(value=False)
 
 		self.detect_faces_checkbox = tk.Checkbutton(
 			self.button_frame,
@@ -59,7 +70,34 @@ class App:
 		self.fps_text = tk.Text(self.root, height=10, width=20)
 		
 		self.fps_text.pack(side=tk.TOP, anchor=tk.NE)
+
+	def create_encodings(self, data_dir="./data"):
+		self.encodings = []
+		self.identities = np.array(list(filter(lambda x: x.endswith('.jpg'), os.listdir(data_dir))))
+		for identity in self.identities: 
+			image_path = os.path.join(data_dir, identity)
+			image = fr.load_image_file(image_path)
+
+			face_locations = fr.face_locations(image)
+
+			encoding = fr.face_encodings(image, face_locations)[0]
+			self.encodings.append(encoding)
 	
+	def recognize_face(self, test_faces, bounding_boxes):
+		test_encoding = fr.face_encodings(test_faces, [bounding_boxes])
+		if len(test_encoding) == 0:
+			return None
+		test_encoding = test_encoding[0]
+		result = fr.compare_faces(self.encodings, test_encoding)
+		# print(test_encoding)
+
+		identities_raw = np.array([x.split('.')[0] for x in self.identities])
+		result_idenity = identities_raw[result]
+		if not len(result_idenity):
+			return None
+		return result_idenity[0]
+
+
 	def get_frame(self, size_reduction=0.6):
 		frame = self.camera.get_frame()
 		if frame is None:
@@ -78,42 +116,60 @@ class App:
 		if not self.size_configured:
 			self.root.geometry(f"{self.frame.shape[1]}x{self.frame.shape[0]}")
 
-	def show_frame(self):
-		start_time = time.time()
+	def update(self):
 		if not self.is_running:
 			return
 
 		self.frame = self.get_frame()
+		self.show_frame(self.frame)
+
+		self.root.after(10, self.update)
+
+	def show_frame(self, frame):
+		start_time = time.time()
+		if not self.is_running:
+			return
 
 		if self.is_detecting_faces():
-			face = self.detect_face(self.frame)
-			if not face is None:
-				for (top, right, bottom, left) in face:
-					cv2.rectangle(self.frame, (left, top), (right, bottom), (0, 255, 0), 2)
+			faces = self.detect_faces(frame)
+			if not faces is None:
+				print(faces)
+				for face in faces:
+					top, right, bottom, left = face
+					cv2.rectangle(frame, (left, top), (right, bottom), (0, 255, 255), 2)
+
+					result = self.recognize_face(frame, face)
+					if not result is None:
+						result = result
+						font_scale = 1.5
+						font = cv2.FONT_HERSHEY_SIMPLEX
+						text_size = cv2.getTextSize(result, font, font_scale, 2)[0]
+
+						text_x = left + (right - left - text_size[0]) // 2
+						text_y = top - 25  # Adjust this value for spacing
+						cv2.putText(frame, result, (text_x, text_y), font, font_scale, (0, 0, 255), 2)
 			
 		if self.is_detecting_landmarks() and self.is_detecting_faces():
-			landmarks = self.detect_landmarks(self.frame, face)
+			landmarks = self.detect_landmarks(self.frame, faces)
 			for landmark in landmarks:
 				for (x, y) in landmark:
 					pass
 					cv2.circle(self.frame, (x, y), 2, (0, 0, 255), -1)  # Draw landmarks in red
 
-
 		end_time = time.time()
 		fps = 1 / (end_time - start_time)
 
-		cv2.putText(self.frame, f"FPS: {fps:.2f}", (60, self.frame.shape[0] - 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2, cv2.LINE_AA)
+		cv2.putText(self.frame, f"FPS: {fps:.2f}", (120, frame.shape[0] - 30), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2, cv2.LINE_AA)
 
-		img = Image.fromarray(self.frame)
+		img = Image.fromarray(frame)
 		imgtk = ImageTk.PhotoImage(image=img)
 
 		self.video_label.imgtk = imgtk
 		self.video_label.configure(image=imgtk)
 
 		self.ensure_correct_size()
-		self.root.after(10, self.show_frame)
 
-	def detect_face(self, frame, fx=0.25, fy=0.25):
+	def detect_faces(self, frame, fx=0.25, fy=0.25):
 		downsampled_frame = cv2.resize(frame, (0, 0), fx=fx, fy=fy)
 		
 		face_locations = fr.face_locations(downsampled_frame)
