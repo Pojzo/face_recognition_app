@@ -36,14 +36,25 @@ class App:
 		self.video_label = Label(self.root)
 		self.video_label.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True)
 
-		self.detect_faces_var = tk.BooleanVar()
+		self.detect_faces_var = tk.BooleanVar(value=True)
+		self.detect_landmarks_var = tk.BooleanVar(value=True)
+
 		self.detect_faces_checkbox = tk.Checkbutton(
 			self.button_frame,
 			text="Detect faces",
 			variable=self.detect_faces_var,
 			command=self.is_detecting_faces
 		)
+
+		self.detect_landmarks_checkbox = tk.Checkbutton(
+			self.button_frame,
+			text="Detect landmarks",
+			variable=self.detect_landmarks_var,
+			command=self.is_detecting_landmarks
+		)
+
 		self.detect_faces_checkbox.pack(pady=10)
+		self.detect_landmarks_checkbox.pack(pady=10)
 
 		self.fps_text = tk.Text(self.root, height=10, width=20)
 		
@@ -79,6 +90,14 @@ class App:
 			if not face is None:
 				for (top, right, bottom, left) in face:
 					cv2.rectangle(self.frame, (left, top), (right, bottom), (0, 255, 0), 2)
+			
+		if self.is_detecting_landmarks() and self.is_detecting_faces():
+			landmarks = self.detect_landmarks(self.frame, face)
+			for landmark in landmarks:
+				for (x, y) in landmark:
+					pass
+					cv2.circle(self.frame, (x, y), 2, (0, 0, 255), -1)  # Draw landmarks in red
+
 
 		end_time = time.time()
 		fps = 1 / (end_time - start_time)
@@ -95,17 +114,13 @@ class App:
 		self.root.after(10, self.show_frame)
 
 	def detect_face(self, frame, fx=0.25, fy=0.25):
-		# Downsample the frame
 		downsampled_frame = cv2.resize(frame, (0, 0), fx=fx, fy=fy)
 		
-		# Detect face locations in the downsampled frame
 		face_locations = fr.face_locations(downsampled_frame)
 		
-		# If no faces are found, return None
 		if not len(face_locations):
 			return None
 		
-		# Adjust face locations to match the original frame size
 		adjusted_face_locations = []
 		for (top, right, bottom, left) in face_locations:
 			# Calculate the adjusted coordinates
@@ -117,8 +132,28 @@ class App:
 		
 		return adjusted_face_locations
 	
+	def detect_landmarks(self, face_image, face_locations=None, model="large"):
+		landmarks_dict = fr.face_landmarks(face_image, face_locations, model)
+		
+		# Convert the landmarks from dicts to an array of tuples
+		landmarks_as_array = []
+		
+		for landmark in landmarks_dict:
+			face_landmarks_array = []
+			
+			# Extract coordinates from the dictionary and append them to the list
+			for key in landmark:
+				points = landmark[key]
+				face_landmarks_array.extend(points)  # Flatten the list of points into a single list
+				
+			landmarks_as_array.append(face_landmarks_array)  # Add to the main array
+
+		return landmarks_as_array	
 	def is_detecting_faces(self):
 		return self.detect_faces_var.get()
+
+	def is_detecting_landmarks(self):
+		return self.detect_landmarks_var.get()
 	
 	def dummy_action(self):
 		# Placeholder for button actions
